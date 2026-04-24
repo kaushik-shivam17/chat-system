@@ -11,11 +11,14 @@ service cloud.firestore {
     function existing() { return resource.data; }
 
     function isValidUser(data) {
+      // focusedChat is optional
+      let hasOptional = data.keys().hasAll(['focusedChat']) ? 1 : 0;
       return data.keys().hasAll(['phoneNumber', 'status', 'lastSeen']) &&
-             data.keys().size() == 3 &&
+             data.keys().size() == 3 + hasOptional &&
              data.phoneNumber is string && data.phoneNumber.size() <= 20 && data.phoneNumber.size() > 0 &&
              data.status is string && data.status in ['online', 'offline'] &&
-             data.lastSeen is timestamp;
+             data.lastSeen is timestamp &&
+             (!data.keys().hasAll(['focusedChat']) || data.focusedChat == null || (data.focusedChat is string && data.focusedChat.size() <= 128));
     }
 
     match /users/{userId} {
@@ -28,8 +31,10 @@ service cloud.firestore {
                     
       allow update: if isSignedIn() && isValidId(userId) && userId == request.auth.uid &&
                     isValidUser(incoming()) && 
-                    incoming().diff(existing()).affectedKeys().hasOnly(['status', 'lastSeen']) &&
-                    incoming().lastSeen == request.time &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['status', 'lastSeen', 'focusedChat']) &&
+                    (
+                      (!incoming().diff(existing()).affectedKeys().hasAny(['lastSeen'])) || incoming().lastSeen == request.time
+                    ) &&
                     incoming().phoneNumber == existing().phoneNumber;
                     
       allow delete: if isSignedIn() && userId == request.auth.uid;

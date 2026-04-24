@@ -89,10 +89,20 @@ export function Main() {
           lastMessageAt: serverTimestamp()
         }, { merge: true });
 
-        // Listen to peer presence
+        // Update my own focused chat
+        await updateDoc(doc(db, "users", myUid), { focusedChat: foundUid }).catch(console.error);
+
+        // Listen to peer presence & focus
         const unsubPeer = onSnapshot(doc(db, "users", foundUid), (d) => {
           if (d.exists()) {
-            setPeerStatus(d.data().status as "online" | "offline");
+             const data = d.data();
+             const isOnline = data.status === "online";
+             const isFocusedOnMe = data.focusedChat === myUid;
+             if (isOnline && isFocusedOnMe) {
+               setPeerStatus("online");
+             } else {
+               setPeerStatus("offline");
+             }
           }
         });
       } else {
@@ -252,7 +262,12 @@ export function Main() {
         </div>
         
         {activePeer && (
-          <Button variant="ghost" onClick={() => setActivePeer(null)} className="text-slate-500 text-sm">
+          <Button variant="ghost" onClick={() => {
+            setActivePeer(null);
+            if (auth.currentUser) {
+              updateDoc(doc(db, "users", auth.currentUser.uid), { focusedChat: null }).catch(() => {});
+            }
+          }} className="text-slate-500 text-sm">
             End Session
           </Button>
         )}
