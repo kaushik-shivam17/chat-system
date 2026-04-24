@@ -49,17 +49,21 @@ service cloud.firestore {
              data.lastMessageAt is timestamp;
     }
 
+    function myPhone() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.phoneNumber;
+    }
+
     match /chats/{chatId} {
-      allow list: if isSignedIn() && request.auth.uid in resource.data.participants;
-      allow get: if isSignedIn() && isValidId(chatId) && request.auth.uid in resource.data.participants;
+      allow list: if isSignedIn() && myPhone() in resource.data.participants;
+      allow get: if isSignedIn() && isValidId(chatId) && myPhone() in resource.data.participants;
       
       allow create: if isSignedIn() && isValidId(chatId) && 
                     isValidChat(incoming()) && 
-                    request.auth.uid in incoming().participants &&
+                    myPhone() in incoming().participants &&
                     incoming().lastMessageAt == request.time;
                     
       allow update: if isSignedIn() && isValidId(chatId) && 
-                    request.auth.uid in existing().participants &&
+                    myPhone() in existing().participants &&
                     isValidChat(incoming()) &&
                     incoming().diff(existing()).affectedKeys().hasOnly(['lastMessageAt']) &&
                     incoming().lastMessageAt == request.time &&
@@ -75,27 +79,27 @@ service cloud.firestore {
       }
 
       match /messages/{messageId} {
-        allow list: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
-        allow get:  if isSignedIn() && isValidId(messageId) && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+        allow list: if isSignedIn() && myPhone() in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+        allow get:  if isSignedIn() && isValidId(messageId) && myPhone() in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
         
         allow create: if isSignedIn() && isValidId(messageId) && 
-                      request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants &&
+                      myPhone() in get(/databases/$(database)/documents/chats/$(chatId)).data.participants &&
                       isValidMessage(incoming()) && incoming().createdAt == request.time;
 
         allow update: if isSignedIn() && isValidId(messageId) && 
-                      request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants &&
+                      myPhone() in get(/databases/$(database)/documents/chats/$(chatId)).data.participants &&
                       incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
                       incoming().status in ['delivered', 'seen'];
                       
-        allow delete: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+        allow delete: if isSignedIn() && myPhone() in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
       }
     }
 
     function isValidCall(data) {
         // offer and answer can be present or not, but we check standard fields strictly
-        return data.keys().hasAll(['callerId', 'receiverId', 'callerPhone', 'status', 'type', 'createdAt', 'updatedAt']) &&
+        return data.keys().hasAll(['callerId', 'receiverPhone', 'callerPhone', 'status', 'type', 'createdAt', 'updatedAt']) &&
                data.callerId is string && data.callerId.size() <= 128 &&
-               data.receiverId is string && data.receiverId.size() <= 128 &&
+               data.receiverPhone is string && data.receiverPhone.size() <= 20 &&
                data.callerPhone is string && data.callerPhone.size() <= 20 &&
                data.status is string && data.status in ['ringing', 'accepted', 'rejected', 'ended', 'missed'] &&
                data.type is string && data.type in ['voice', 'video'] &&
@@ -103,8 +107,8 @@ service cloud.firestore {
     }
 
     match /calls/{callId} {
-      allow list: if isSignedIn() && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid);
-      allow get: if isSignedIn() && isValidId(callId) && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+      allow list: if isSignedIn() && (resource.data.callerId == request.auth.uid || resource.data.receiverPhone == myPhone());
+      allow get: if isSignedIn() && isValidId(callId) && (resource.data.callerId == request.auth.uid || resource.data.receiverPhone == myPhone());
 
       allow create: if isSignedIn() && isValidId(callId) && 
                     isValidCall(incoming()) && 
@@ -114,10 +118,10 @@ service cloud.firestore {
                     incoming().status == 'ringing';
 
       allow update: if isSignedIn() && isValidId(callId) && 
-                    (existing().callerId == request.auth.uid || existing().receiverId == request.auth.uid) &&
+                    (existing().callerId == request.auth.uid || existing().receiverPhone == myPhone()) &&
                     incoming().updatedAt == request.time &&
                     incoming().callerId == existing().callerId &&
-                    incoming().receiverId == existing().receiverId &&
+                    incoming().receiverPhone == existing().receiverPhone &&
                     incoming().callerPhone == existing().callerPhone &&
                     incoming().createdAt == existing().createdAt;
                     
@@ -130,14 +134,14 @@ service cloud.firestore {
       }              
 
       match /callerCandidates/{candidateId} {
-        allow read: if isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.receiverId;
+        allow read: if isSignedIn() && myPhone() == get(/databases/$(database)/documents/calls/$(callId)).data.receiverPhone;
         allow create: if isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerId &&
                       isValidCandidate(incoming());
       }
       
       match /receiverCandidates/{candidateId} {
         allow read: if isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerId;
-        allow create: if isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.receiverId &&
+        allow create: if isSignedIn() && myPhone() == get(/databases/$(database)/documents/calls/$(callId)).data.receiverPhone &&
                       isValidCandidate(incoming());
       }
     }

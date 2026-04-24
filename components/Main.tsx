@@ -3,13 +3,44 @@
 import { useEffect, useState, useRef } from "react";
 import { useAppStore } from "@/lib/store";
 import { auth, db } from "@/lib/firebase";
-import { collection, query, where, getDocs, doc, onSnapshot, setDoc, serverTimestamp, orderBy, limit, addDoc, updateDoc } from "firebase/firestore";
+import { collection, query, where, getDocs, getDoc, doc, onSnapshot, setDoc, serverTimestamp, orderBy, limit, addDoc, updateDoc } from "firebase/firestore";
 import { io, Socket } from "socket.io-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { PhoneCall, Video, Search, Send, User as UserIcon } from "lucide-react";
 import { CallOverlay } from "./CallOverlay";
+
+function RecentChatCard({ chat, onSelect }: { chat: any, onSelect: () => void }) {
+  const [status, setStatus] = useState<"online" | "offline">("offline");
+
+  useEffect(() => {
+    const q = query(collection(db, "users"), where("phoneNumber", "==", chat.phone));
+    const unsub = onSnapshot(q, (snap) => {
+       let isOnline = false;
+       const now = Date.now();
+       snap.forEach(d => {
+         const data = d.data();
+         const seenMs = data.lastSeen?.toMillis() || 0;
+         if (data.status === "online" && (now - seenMs) < 90000) {
+           isOnline = true;
+         }
+       });
+       setStatus(isOnline ? "online" : "offline");
+    });
+    return () => unsub();
+  }, [chat.phone]);
+
+  return (
+    <button 
+      onClick={onSelect}
+      className="w-full bg-white flex items-center justify-between p-4 rounded-2xl shadow-sm border border-slate-200 hover:border-slate-300 transition-all"
+    >
+      <span className="font-mono text-slate-700 font-semibold">{chat.phone}</span>
+      <div className={`w-2 h-2 rounded-full ${status === "online" ? "bg-emerald-400" : "bg-slate-300"}`} />
+    </button>
+  );
+}
 
 export function Main() {
   const { myPhone, activePeer, setActivePeer, setIsCalling } = useAppStore();
@@ -20,9 +51,11 @@ export function Main() {
   const [messages, setMessages] = useState<any[]>([]);
   const [messageText, setMessageText] = useState("");
   const [isPeerTyping, setIsPeerTyping] = useState(false);
+  const [recentChats, setRecentChats] = useState<{phone: string, uid: string}[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const unsubPeerRef = useRef<(() => void) | null>(null);
 
   // Global presence & incoming calls listener
   useEffect(() => {
@@ -37,7 +70,7 @@ export function Main() {
     }, 60000); // Every minute
 
     // Incoming call listener
-    const callsQuery = query(collection(db, "calls"), where("receiverId", "==", uid), where("status", "==", "ringing"));
+    const callsQuery = query(collection(db, "calls"), where("receiverPhone", "==", myPhone), where("status", "==", "ringing"));
     const unsubCalls = onSnapshot(callsQuery, (snap) => {
       snap.docChanges().forEach(change => {
         if (change.type === "added") {
@@ -46,20 +79,56 @@ export function Main() {
       });
     });
 
+    // Active chats listener
+    const chatsQuery = query(collection(db, "chats"), where("participants", "array-contains", myPhone));
+    const unsubChats = onSnapshot(chatsQuery, async (snap) => {
+      const chatsList: {phone: string, uid: string, lastActive: number}[] = [];
+      for (const d of snap.docs) {
+        const data = d.data();
+        const otherPhone = data.participants.find((p: string) => p !== myPhone);
+        if (otherPhone) {
+          try {
+            // Find the latest user document for this phone number
+            const q = query(collection(db, "users"), where("phoneNumber", "==", otherPhone));
+            const userSnap = await getDocs(q);
+            let latestSeen = 0;
+            let currentUid = null;
+            userSnap.forEach(u => {
+              const seen = u.data().lastSeen?.toMillis() || 0;
+              if (seen > latestSeen) {
+                latestSeen = seen;
+                currentUid = u.id;
+              }
+            });
+            if (currentUid) {
+              chatsList.push({ 
+                uid: currentUid, 
+                phone: otherPhone,
+                lastActive: data.lastMessageAt?.toMillis() || 0
+              });
+            }
+          } catch(e) {}
+        }
+      }
+      setRecentChats(chatsList.sort((a,b) => b.lastActive - a.lastActive));
+    });
+
     return () => {
       clearInterval(interval);
       unsubCalls();
+      unsubChats();
       // Optional: Set offline on dismount using a beacon or similar in real app
     };
-  }, []);
+  }, [myPhone]);
 
   // Find peer logic
-  const handleFindPeer = async (e?: React.FormEvent) => {
+  const handleFindPeer = async (e?: React.FormEvent, explicitPhone?: string) => {
     if (e) e.preventDefault();
-    if (!peerInput || peerInput === myPhone) return;
+    const phoneToFind = explicitPhone || peerInput;
+    if (!phoneToFind || phoneToFind === myPhone) return;
 
     try {
-      const q = query(collection(db, "users"), where("phoneNumber", "==", peerInput));
+      const q = query(collection(db, "users"), where("phoneNumber", "==", phoneToFind));
       const snap = await getDocs(q);
       
       let foundUid = null;
@@ -78,32 +147,43 @@ export function Main() {
         setPeerUid(foundUid);
         setActivePeer(peerInput);
         
-        // Setup Chat ID
+        // Setup Chat ID based on phones
         const myUid = auth.currentUser!.uid;
-        const newChatId = [myUid, foundUid].sort().join("_");
+        const newChatId = [myPhone, phoneToFind].sort().join("_");
         setChatId(newChatId);
         
         // Ensure chat document exists
         await setDoc(doc(db, "chats", newChatId), {
-          participants: [myUid, foundUid].sort(),
+          participants: [myPhone, phoneToFind].sort(),
           lastMessageAt: serverTimestamp()
         }, { merge: true });
 
         // Update my own focused chat
-        await updateDoc(doc(db, "users", myUid), { focusedChat: foundUid }).catch(console.error);
+        await updateDoc(doc(db, "users", myUid), { focusedChat: phoneToFind }).catch(console.error);
 
         // Listen to peer presence & focus
-        const unsubPeer = onSnapshot(doc(db, "users", foundUid), (d) => {
-          if (d.exists()) {
+        if (unsubPeerRef.current) unsubPeerRef.current();
+        const qPeer = query(collection(db, "users"), where("phoneNumber", "==", phoneToFind));
+        unsubPeerRef.current = onSnapshot(qPeer, (snap) => {
+           let isOnline = false;
+           let isFocusedOnMe = false;
+           const now = Date.now();
+           snap.forEach(d => {
              const data = d.data();
-             const isOnline = data.status === "online";
-             const isFocusedOnMe = data.focusedChat === myUid;
-             if (isOnline && isFocusedOnMe) {
-               setPeerStatus("online");
-             } else {
-               setPeerStatus("offline");
+             const seenMs = data.lastSeen?.toMillis() || 0;
+             if (data.status === "online" && (now - seenMs) < 90000) {
+               isOnline = true;
+               if (data.focusedChat === myPhone) {
+                 isFocusedOnMe = true;
+               }
              }
-          }
+           });
+           
+           if (isOnline && isFocusedOnMe) {
+             setPeerStatus("online");
+           } else {
+             setPeerStatus("offline");
+           }
         });
       } else {
         alert("Number not found or offline."); // Replace with soft toast later
@@ -213,7 +293,7 @@ export function Main() {
       const callRef = doc(collection(db, "calls"));
       await setDoc(callRef, {
         callerId: myUid,
-        receiverId: peerUid,
+        receiverPhone: activePeer,
         callerPhone: myPhone,
         status: "ringing",
         type,
@@ -222,7 +302,7 @@ export function Main() {
       });
       setIsCalling(true);
       // We will handle the actual localWebRTC logic inside CallOverlay
-      useAppStore.getState().setIncomingCall({ id: callRef.id, callerId: myUid, receiverId: peerUid, callerPhone: myPhone, type, status: "ringing", isInitiator: true });
+      useAppStore.getState().setIncomingCall({ id: callRef.id, callerId: myUid, receiverPhone: activePeer, callerPhone: myPhone, type, status: "ringing", isInitiator: true });
     } catch (err) {
       console.error("Call error", err);
     }
@@ -264,6 +344,11 @@ export function Main() {
         {activePeer && (
           <Button variant="ghost" onClick={() => {
             setActivePeer(null);
+            setPeerStatus(null);
+            if (unsubPeerRef.current) {
+              unsubPeerRef.current();
+              unsubPeerRef.current = null;
+            }
             if (auth.currentUser) {
               updateDoc(doc(db, "users", auth.currentUser.uid), { focusedChat: null }).catch(() => {});
             }
@@ -343,16 +428,15 @@ export function Main() {
                 <Input 
                   value={messageText}
                   onChange={(e) => handleType(e.target.value)}
-                  placeholder={peerStatus === "online" ? "Type a temporary message..." : `Waiting for ${activePeer} to connect...`}
-                  className="w-full bg-transparent border-none focus-visible:ring-0 text-sm placeholder:text-slate-400 text-slate-800 shadow-none h-auto p-0 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={peerStatus !== "online"}
+                  placeholder={peerStatus === "online" ? "Type a temporary message..." : "Type to leave a message..."}
+                  className="w-full bg-transparent border-none focus-visible:ring-0 text-sm placeholder:text-slate-400 text-slate-800 shadow-none h-auto p-0"
                 />
-                <button type="submit" disabled={!messageText.trim() || peerStatus !== "online"} className="sr-only">Send</button>
+                <button type="submit" disabled={!messageText.trim()} className="sr-only">Send</button>
               </form>
             </div>
             <button 
               onClick={handleSendMessage}
-              disabled={!messageText.trim() || peerStatus !== "online"}
+              disabled={!messageText.trim()}
               className="w-12 h-12 rounded-full bg-slate-900 flex items-center justify-center text-white hover:scale-105 transition-transform shadow-lg disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed"
             >
               <Send className="w-5 h-5 ml-1" />
@@ -385,6 +469,24 @@ export function Main() {
                 Connect
               </Button>
             </form>
+
+            {recentChats.length > 0 && (
+              <div className="pt-8 text-left">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-4 px-2">Active Sessions</h3>
+                <div className="space-y-2">
+                  {recentChats.map((chat) => (
+                    <RecentChatCard 
+                      key={chat.uid} 
+                      chat={chat}
+                      onSelect={async () => {
+                        setPeerInput(chat.phone);
+                        await handleFindPeer(undefined, chat.phone);
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </main>
       )}

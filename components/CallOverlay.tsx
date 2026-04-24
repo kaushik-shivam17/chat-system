@@ -55,6 +55,11 @@ export function CallOverlay() {
       if (!data) return;
       if (data.status === "rejected" || data.status === "ended" || data.status === "missed") {
         terminateCall(); // cleanup
+      } else {
+        const currentCall = useAppStore.getState().incomingCall;
+        if (currentCall && data.status !== currentCall.status) {
+          setIncomingCall({ ...currentCall, status: data.status });
+        }
       }
     });
 
