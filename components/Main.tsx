@@ -251,19 +251,11 @@ export function Main() {
           </div>
         </div>
         
-        <form onSubmit={handleFindPeer} className="flex max-w-sm w-full gap-2 relative">
-          <div className="flex-1 bg-slate-100 rounded-2xl px-4 py-2 flex items-center border border-transparent focus-within:border-slate-200 transition-all">
-            <Input 
-              value={peerInput}
-              onChange={(e) => setPeerInput(e.target.value.replace(/\D/g, ""))}
-              placeholder="Dial a number to connect..."
-              className="bg-transparent border-none focus-visible:ring-0 text-sm placeholder:text-slate-400 text-slate-800 shadow-none h-auto p-0 px-2"
-            />
-            <Button type="submit" size="icon" variant="ghost" className="text-slate-400 hover:text-slate-600 h-8 w-8">
-              <Search className="w-4 h-4" />
-            </Button>
-          </div>
-        </form>
+        {activePeer && (
+          <Button variant="ghost" onClick={() => setActivePeer(null)} className="text-slate-500 text-sm">
+            End Session
+          </Button>
+        )}
       </header>
 
       {activePeer ? (
@@ -331,21 +323,22 @@ export function Main() {
           </ScrollArea>
           
           <div className="p-6 border-t border-slate-100 flex items-center gap-4 bg-white">
-            <div className="flex-1 bg-slate-100 rounded-2xl px-6 py-3 border border-transparent focus-within:border-slate-200 transition-all">
+            <div className={`flex-1 ${peerStatus === "online" ? "bg-slate-100 focus-within:border-slate-200" : "bg-slate-50"} rounded-2xl px-6 py-3 border border-transparent transition-all`}>
               <form onSubmit={handleSendMessage} className="flex gap-2">
                 <Input 
                   value={messageText}
                   onChange={(e) => handleType(e.target.value)}
-                  placeholder="Type a temporary message..."
-                  className="w-full bg-transparent border-none focus-visible:ring-0 text-sm placeholder:text-slate-400 text-slate-800 shadow-none h-auto p-0"
+                  placeholder={peerStatus === "online" ? "Type a temporary message..." : `Waiting for ${activePeer} to connect...`}
+                  className="w-full bg-transparent border-none focus-visible:ring-0 text-sm placeholder:text-slate-400 text-slate-800 shadow-none h-auto p-0 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={peerStatus !== "online"}
                 />
-                <button type="submit" disabled={!messageText.trim()} className="sr-only">Send</button>
+                <button type="submit" disabled={!messageText.trim() || peerStatus !== "online"} className="sr-only">Send</button>
               </form>
             </div>
             <button 
               onClick={handleSendMessage}
-              disabled={!messageText.trim()}
-              className="w-12 h-12 rounded-full bg-slate-900 flex items-center justify-center text-white hover:scale-105 transition-transform shadow-lg disabled:opacity-50 disabled:hover:scale-100"
+              disabled={!messageText.trim() || peerStatus !== "online"}
+              className="w-12 h-12 rounded-full bg-slate-900 flex items-center justify-center text-white hover:scale-105 transition-transform shadow-lg disabled:opacity-50 disabled:hover:scale-100 disabled:cursor-not-allowed"
             >
               <Send className="w-5 h-5 ml-1" />
             </button>
@@ -353,14 +346,30 @@ export function Main() {
         </main>
       ) : (
         <main className="flex-1 flex flex-col items-center justify-center p-8 bg-slate-50">
-          <div className="text-center max-w-sm space-y-4">
-            <div className="w-20 h-20 mx-auto bg-white border border-slate-200 shadow-sm rounded-full flex flex-col items-center justify-center">
-              <PhoneCall className="w-8 h-8 text-slate-300" />
+          <div className="text-center w-full max-w-sm space-y-8">
+            <div className="space-y-4">
+              <div className="w-20 h-20 mx-auto bg-white border border-slate-200 shadow-sm rounded-full flex flex-col items-center justify-center">
+                <PhoneCall className="w-8 h-8 text-slate-300" />
+              </div>
+              <h2 className="text-xl font-bold tracking-tight text-slate-900">No active comms</h2>
+              <p className="text-sm text-slate-500 leading-relaxed">
+                Connect securely. All history self-destructs upon termination.
+              </p>
             </div>
-            <h2 className="text-xl font-bold tracking-tight text-slate-900">No active comms</h2>
-            <p className="text-sm text-slate-500 leading-relaxed">
-              Dial a number above to start a secure, ephemeral session. All history self-destructs upon termination.
-            </p>
+            
+            <form onSubmit={handleFindPeer} className="flex flex-col gap-3">
+              <div className="bg-white rounded-2xl px-4 py-3 flex items-center border border-slate-200 focus-within:border-slate-400 focus-within:ring-4 focus-within:ring-slate-100 transition-all shadow-sm">
+                <Input 
+                  value={peerInput}
+                  onChange={(e) => setPeerInput(e.target.value.replace(/\D/g, ""))}
+                  placeholder="Enter number to contact..."
+                  className="bg-transparent border-none focus-visible:ring-0 text-base placeholder:text-slate-400 text-slate-800 shadow-none h-auto p-0 px-2 flex-1"
+                />
+              </div>
+              <Button type="submit" size="lg" className="w-full rounded-2xl bg-slate-900 text-white hover:bg-slate-800 shadow-lg text-base h-12">
+                Connect
+              </Button>
+            </form>
           </div>
         </main>
       )}
