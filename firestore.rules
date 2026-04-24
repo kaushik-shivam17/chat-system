@@ -1,0 +1,140 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() { return request.auth != null; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['phoneNumber', 'status', 'lastSeen']) &&
+             data.keys().size() == 3 &&
+             data.phoneNumber is string && data.phoneNumber.size() <= 20 && data.phoneNumber.size() > 0 &&
+             data.status is string && data.status in ['online', 'offline'] &&
+             data.lastSeen is timestamp;
+    }
+
+    match /users/{userId} {
+      // Anyone can see active users (to find them by phone number)
+      allow list: if isSignedIn(); 
+      allow get: if isSignedIn() && isValidId(userId);
+
+      allow create: if isSignedIn() && isValidId(userId) && userId == request.auth.uid &&
+                    isValidUser(incoming()) && incoming().lastSeen == request.time;
+                    
+      allow update: if isSignedIn() && isValidId(userId) && userId == request.auth.uid &&
+                    isValidUser(incoming()) && 
+                    incoming().diff(existing()).affectedKeys().hasOnly(['status', 'lastSeen']) &&
+                    incoming().lastSeen == request.time &&
+                    incoming().phoneNumber == existing().phoneNumber;
+                    
+      allow delete: if isSignedIn() && userId == request.auth.uid;
+    }
+
+    function isValidChat(data) {
+      return data.keys().hasAll(['participants', 'lastMessageAt']) &&
+             data.keys().size() == 2 &&
+             data.participants is list && data.participants.size() == 2 && 
+             data.participants[0] is string && data.participants[0].size() <= 128 &&
+             data.participants[1] is string && data.participants[1].size() <= 128 &&
+             data.lastMessageAt is timestamp;
+    }
+
+    match /chats/{chatId} {
+      allow list: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow get: if isSignedIn() && isValidId(chatId) && request.auth.uid in resource.data.participants;
+      
+      allow create: if isSignedIn() && isValidId(chatId) && 
+                    isValidChat(incoming()) && 
+                    request.auth.uid in incoming().participants &&
+                    incoming().lastMessageAt == request.time;
+                    
+      allow update: if isSignedIn() && isValidId(chatId) && 
+                    request.auth.uid in existing().participants &&
+                    isValidChat(incoming()) &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['lastMessageAt']) &&
+                    incoming().lastMessageAt == request.time &&
+                    incoming().participants == existing().participants;
+
+      function isValidMessage(data) {
+        return data.keys().hasAll(['senderId', 'text', 'status', 'createdAt']) &&
+               data.keys().size() == 4 &&
+               data.senderId is string && data.senderId == request.auth.uid &&
+               data.text is string && data.text.size() <= 1000 &&
+               data.status is string && data.status in ['sent', 'delivered', 'seen'] &&
+               data.createdAt is timestamp;
+      }
+
+      match /messages/{messageId} {
+        allow list: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+        allow get:  if isSignedIn() && isValidId(messageId) && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+        
+        allow create: if isSignedIn() && isValidId(messageId) && 
+                      request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants &&
+                      isValidMessage(incoming()) && incoming().createdAt == request.time;
+
+        allow update: if isSignedIn() && isValidId(messageId) && 
+                      request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants &&
+                      incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
+                      incoming().status in ['delivered', 'seen'];
+                      
+        allow delete: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+      }
+    }
+
+    function isValidCall(data) {
+        // offer and answer can be present or not, but we check standard fields strictly
+        return data.keys().hasAll(['callerId', 'receiverId', 'callerPhone', 'status', 'type', 'createdAt', 'updatedAt']) &&
+               data.callerId is string && data.callerId.size() <= 128 &&
+               data.receiverId is string && data.receiverId.size() <= 128 &&
+               data.callerPhone is string && data.callerPhone.size() <= 20 &&
+               data.status is string && data.status in ['ringing', 'accepted', 'rejected', 'ended', 'missed'] &&
+               data.type is string && data.type in ['voice', 'video'] &&
+               data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    match /calls/{callId} {
+      allow list: if isSignedIn() && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+      allow get: if isSignedIn() && isValidId(callId) && (resource.data.callerId == request.auth.uid || resource.data.receiverId == request.auth.uid);
+
+      allow create: if isSignedIn() && isValidId(callId) && 
+                    isValidCall(incoming()) && 
+                    incoming().callerId == request.auth.uid &&
+                    incoming().createdAt == request.time &&
+                    incoming().updatedAt == request.time &&
+                    incoming().status == 'ringing';
+
+      allow update: if isSignedIn() && isValidId(callId) && 
+                    (existing().callerId == request.auth.uid || existing().receiverId == request.auth.uid) &&
+                    incoming().updatedAt == request.time &&
+                    incoming().callerId == existing().callerId &&
+                    incoming().receiverId == existing().receiverId &&
+                    incoming().callerPhone == existing().callerPhone &&
+                    incoming().createdAt == existing().createdAt;
+                    
+      function isValidCandidate(data) {
+         return data.keys().hasAll(['candidate', 'sdpMid', 'sdpMLineIndex']) &&
+                data.keys().size() == 3 &&
+                data.candidate is string && data.candidate.size() <= 2000 &&
+                data.sdpMid is string && data.sdpMid.size() <= 100 &&
+                data.sdpMLineIndex is number;
+      }              
+
+      match /callerCandidates/{candidateId} {
+        allow read: if isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.receiverId;
+        allow create: if isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerId &&
+                      isValidCandidate(incoming());
+      }
+      
+      match /receiverCandidates/{candidateId} {
+        allow read: if isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.callerId;
+        allow create: if isSignedIn() && request.auth.uid == get(/databases/$(database)/documents/calls/$(callId)).data.receiverId &&
+                      isValidCandidate(incoming());
+      }
+    }
+  }
+}

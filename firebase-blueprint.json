@@ -1,0 +1,94 @@
+/**
+ * Defines the structure of the Firestore database.
+ */
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Ephemeral user session tied to a phone number.",
+      "type": "object",
+      "properties": {
+        "phoneNumber": { "type": "string", "maxLength": 20 },
+        "status": { "type": "string", "enum": ["online", "offline"] },
+        "lastSeen": { "type": "timestamp" }
+      },
+      "required": ["phoneNumber", "status", "lastSeen"]
+    },
+    "Chat": {
+      "title": "Chat",
+      "description": "Chat session metadata",
+      "type": "object",
+      "properties": {
+        "participants": { "type": "array", "items": { "type": "string" }, "maxItems": 2 },
+        "lastMessageAt": { "type": "timestamp" }
+      },
+      "required": ["participants", "lastMessageAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A single ephemeral message",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "text": { "type": "string", "maxLength": 1000 },
+        "status": { "type": "string", "enum": ["sent", "delivered", "seen"] },
+        "createdAt": { "type": "timestamp" }
+      },
+      "required": ["senderId", "text", "status", "createdAt"]
+    },
+    "Call": {
+      "title": "Call",
+      "description": "WebRTC signaling session",
+      "type": "object",
+      "properties": {
+        "callerId": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "callerPhone": { "type": "string" },
+        "status": { "type": "string", "enum": ["ringing", "accepted", "rejected", "ended", "missed"] },
+        "type": { "type": "string", "enum": ["voice", "video"] },
+        "offer": { "type": "object" },
+        "answer": { "type": "object" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["callerId", "receiverId", "callerPhone", "status", "type", "createdAt", "updatedAt"]
+    },
+    "SignalingCandidate": {
+      "title": "SignalingCandidate",
+      "description": "WebRTC ICE Candidate",
+      "type": "object",
+      "properties": {
+        "candidate": { "type": "string" },
+        "sdpMid": { "type": "string" },
+        "sdpMLineIndex": { "type": "number" }
+      },
+      "required": ["candidate", "sdpMid", "sdpMLineIndex"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Active ephemeral user sessions."
+    },
+    "/chats/{chatId}": {
+      "schema": { "$ref": "#/entities/Chat" },
+      "description": "1:1 chat root document."
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/Message" },
+      "description": "1:1 chat messages."
+    },
+    "/calls/{callId}": {
+      "schema": { "$ref": "#/entities/Call" },
+      "description": "WebRTC calls and session descriptions."
+    },
+    "/calls/{callId}/callerCandidates/{candidateId}": {
+      "schema": { "$ref": "#/entities/SignalingCandidate" },
+      "description": "ICE candidates from the caller."
+    },
+    "/calls/{callId}/receiverCandidates/{candidateId}": {
+      "schema": { "$ref": "#/entities/SignalingCandidate" },
+      "description": "ICE candidates from the receiver."
+    }
+  }
+}

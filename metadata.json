@@ -1,0 +1,9 @@
+{
+  "name": "GhostCall - Ephemeral Comms",
+  "description": "Secure, real-time web application for ephemeral messaging, voice, and video calling using phone numbers.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
